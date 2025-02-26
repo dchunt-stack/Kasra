@@ -9,15 +9,46 @@ var g0          = 'Sessions'
 sesh1time       = input.session('1300-2200', 'Session Time', inline = '0', group = g0)
 tz              = input.string('GMT-4', 'Time Zone', tooltip = 'GMT and UTC is the same thing \nMatch this setting to bottom right time', options = ['GMT-10', 'GMT-9', 'GMT-8', 'GMT-7', 'GMT-6', 'GMT-5', 'GMT-4', 'GMT-3', 'GMT+0', 'GMT+1', 'GMT+2', 'GMT+3', 'GMT+4', 'GMT+5', 'GMT+6', 'GMT+7', 'GMT+8', 'GMT+9', 'GMT+10', 'GMT+10:30', 'GMT+11', 'GMT+12', 'GMT+13', 'GMT+13:45'], group = g0)
 length          = input.int(14, 'ASR Length')
+showHistorical  = input.bool(true, 'Show Historical Sessions', group = g0)
+historicalCount = input.int(5, 'Number of Historical Sessions', minval=1, maxval=14, group = g0)
+historicalTransp = input.int(50, 'Historical Transparency %', minval=0, maxval=90, group = g0)
 
-var g1          = 'Lines'
+var g1           = 'Lines'
 showLines       = input.bool(true, 'Show Lines', group = g1)
 showLabels      = input.bool(true, 'Show Labels', group = g1, inline = '01')
 labPos          = input.string('Left', '', options=['Left', 'Right'], group= g1, inline = '01')
+qtrBool         = input.bool(true, '', inline = '1', group = g1)
+qtrCol          = input.color(color.lime, '0.25 ASR‏ ‏ ‏ ‏', inline = '1', group = g1)
+qtrWidth        = input.int(1, '', inline = '1', group = g1)
+qtrStyle        = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '1', group = g1)
 halfBool        = input.bool(true, '', inline = '2', group = g1)
 halfCol         = input.color(color.green, '0.50 ASR‏ ‏ ‏ ‏', inline = '2', group = g1)
 halfWidth       = input.int(1, '', inline = '2', group = g1)
 halfStyle       = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '2', group = g1)
+qtr3Bool        = input.bool(true, '', inline = '3', group = g1)
+qtr3Col         = input.color(color.orange, '0.75 ASR‏ ‏ ‏ ‏', inline = '3', group = g1)
+qtr3Width       = input.int(1, '', inline = '3', group = g1)
+qtr3Style       = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '3', group = g1)
+asrBool         = input.bool(true, '', inline = '4', group = g1)
+asrCol          = input.color(color.fuchsia, '1 ASR ‏  ‏ ‏ ‏ ‏ ‏  ‏ ‏ ', inline = '4', group = g1)
+asrWidth        = input.int(1, '', inline = '4', group = g1)
+asrStyle        = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '4', group = g1)
+asrQtrBool      = input.bool(true, '', inline = '5', group = g1)
+asrQtrCol       = input.color(color.red, '1.25 ASR‏ ‏  ‏  ‏', inline = '5', group = g1)
+asrQtrWidth     = input.int(1, '', inline = '5', group = g1)
+asrQtrStyle     = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '5', group = g1)
+asrHalfBool     = input.bool(true, '', inline = '6', group = g1)
+asrHalfCol      = input.color(color.maroon, '1.5 ASR ‏ ‏  ‏  ‏ ‏', inline = '6', group = g1)
+asrHalfWidth    = input.int(1, '', inline = '6', group = g1)
+asrHalfStyle    = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '6', group = g1)
+asrQtr3Bool     = input.bool(true, '', inline = '7', group = g1)
+asrQtr3Col      = input.color(color.navy, '1.75 ASR‏  ‏ ‏  ‏', inline = '7', group = g1)
+asrQtr3Width    = input.int(1, '', inline = '7', group = g1)
+asrQtr3Style    = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '7', group = g1)
+asrDubBool      = input.bool(true, '', inline = '8', group = g1)
+asrDubCol       = input.color(color.black, '2 ASR ‏  ‏ ‏ ‏ ‏  ‏ ‏  ‏ ', inline = '8', group = g1)
+asrDubWidth     = input.int(1, '', inline = '8', group = g1)
+asrDubStyle     = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '8', group = g1)
 
 var g3          = 'ASR Label'
 yPos            = input.string('Bottom', 'Position ', options = ['Top', 'Middle', 'Bottom'], inline = '00', group = g3)
@@ -49,9 +80,12 @@ type lineDrawing
     bool    showLev
     string  name
 
-var colArr = array.from(
-         lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '.50 ASR'),
-         lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '-.50 ASR'))
+var colArr = array.from(lineDrawing.new(qtrCol, qtrWidth, qtrStyle.styler(), qtrBool, '.25 ASR'), lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '.50 ASR'), lineDrawing.new(qtr3Col, qtr3Width, qtr3Style.styler(), qtr3Bool, '.75 ASR'),
+     lineDrawing.new(asrCol, asrWidth, asrStyle.styler(), asrBool, '1 ASR'), lineDrawing.new(asrQtrCol, asrQtrWidth, asrQtrStyle.styler(), asrQtrBool, '1.25 ASR'), lineDrawing.new(asrHalfCol, asrHalfWidth, asrHalfStyle.styler(), asrHalfBool, '1.50 ASR'),
+     lineDrawing.new(asrQtr3Col, asrQtr3Width, asrQtr3Style.styler(), asrQtr3Bool, '1.75 ASR'), lineDrawing.new(asrDubCol, asrDubWidth, asrDubStyle.styler(), asrDubBool, '2 ASR'), lineDrawing.new(qtrCol, qtrWidth, qtrStyle.styler(), qtrBool, '-.25 ASR'), 
+     lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '-.50 ASR'), lineDrawing.new(qtr3Col, qtr3Width, qtr3Style.styler(), qtr3Bool, '-.75 ASR'), lineDrawing.new(asrCol, asrWidth, asrStyle.styler(), asrBool, '-1 ASR'), 
+     lineDrawing.new(asrQtrCol, asrQtrWidth, asrQtrStyle.styler(), asrQtrBool, '-1.25 ASR'), lineDrawing.new(asrHalfCol, asrHalfWidth, asrHalfStyle.styler(), asrHalfBool, '-1.50 ASR'), lineDrawing.new(asrQtr3Col, asrQtr3Width, asrQtr3Style.styler(), asrQtr3Bool, '-1.75 ASR'), 
+     lineDrawing.new(asrDubCol, asrDubWidth, asrDubStyle.styler(), asrDubBool, '-2 ASR'))
 
 //----------sessions----------//
 session         = time(timeframe.period, sesh1time, tz)
@@ -85,27 +119,43 @@ var float sessionHigh   = na
 var float sessionLow    = na
 var float sessionOpen   = na
 var table asrLabel      = table.new(str.lower(yPos) + '_' + str.lower(xPos), 1, 1, tableBgColor, color.new(color.white,100), 1, color.new(color.white,100), 1)
+var sessionOpens       = array.new<float>()  // Store historical opens
+var sessionStarts      = array.new<int>()    // Store session start times
+var sessionLengths     = array.new<int>()    // Store session lengths
 
 //----------session data----------//
 if startSession
-    sessionHigh := high      // Initialize session high with first bar's high
-    sessionLow  := low       // Initialize session low with first bar's low
-    sessionOpen := open      // Capture session's opening price
+    sessionHigh := high
+    sessionLow  := low
+    sessionOpen := open
+    // Store session data at the start instead of end
+    sessionOpens.push(sessionOpen)
+    sessionStarts.push(time)
+    sessionLengths.push(sessionLength)
+    
+    if sessionOpens.size() > length * 2  // Keep double length for history
+        sessionOpens.shift()
+        sessionStarts.shift()
+        sessionLengths.shift()
 
 if time == session
-    sessionHigh := math.max(sessionHigh,high)    // Update session high if new high occurs
-    sessionLow  := math.min(sessionLow,low)      // Update session low if new low occurs
+    sessionHigh := math.max(sessionHigh,high)
+    sessionLow  := math.min(sessionLow,low)
 
 if endSession
-    sessionRanges.push(sessionHigh-sessionLow)   // Calculate and store session's range
-    if sessionRanges.size() > length
-        sessionRanges.shift()                    // Remove oldest range if exceeding length
+    sessionRanges.push(sessionHigh-sessionLow)
+    if sessionRanges.size() > length * 2
+        sessionRanges.shift()
 
 //----------conditions----------//
-asr     = sessionRanges.size() > 0 ? sessionRanges.avg() : na    // Calculate average of stored ranges
-half    = asr / 2                                                 // Calculate half of ASR
+asr     = sessionRanges.size() > 0 ? sessionRanges.avg() : na
+qtr     = asr / 4
+half    = qtr * 2
+qtr3    = qtr * 3
 
-asrArr = array.from(sessionOpen + half, sessionOpen - half)
+asrArr = array.from(sessionOpen + qtr, sessionOpen + half, sessionOpen + qtr3, sessionOpen + asr, sessionOpen + asr + qtr, 
+     sessionOpen + asr + half, sessionOpen + asr + qtr3, sessionOpen + asr *2, sessionOpen - qtr, sessionOpen - half, 
+     sessionOpen - qtr3, sessionOpen - asr, sessionOpen - asr - qtr, sessionOpen - asr - half, sessionOpen - asr - qtr3, sessionOpen - asr*2)
 
 //----------lines-----------//
 if startSession
@@ -116,13 +166,47 @@ if startSession
     labels.clear()
     lines.clear()
     if showLines
+        // Draw current session
         for [idx,lev] in asrArr
             setting = colArr.get(idx)
             if setting.showLev
                 lines.push(line.new(time, lev, time + sessionLength, lev, xloc.bar_time, extend.none, setting.levCol, setting.levStyle, setting.levWidth))
                 if showLabels
-                    labels.push(label.new(labPos == 'Left' ? time : time + sessionLength, lev, setting.name + ' (' + str.tostring(lev,format.mintick) + ')', 
+                    labelText = setting.name + ' (' + str.tostring(lev, format.mintick) + ')'
+                    labels.push(label.new(labPos == 'Left' ? time : time + sessionLength, lev, labelText,
                          xloc.bar_time, color = color.new(color.white,100), style = labPos == 'Left' ? label.style_label_right : label.style_label_left, textcolor = setting.levCol))
+    
+        // Draw historical sessions only if we have enough data
+        if showHistorical and sessionOpens.size() > 1
+            for i = 1 to math.min(historicalCount, sessionOpens.size()-1)
+                if i < sessionOpens.size()
+                    histOpen = sessionOpens.get(sessionOpens.size()-i)
+                    histStart = sessionStarts.get(sessionStarts.size()-i)
+                    histLength = sessionLengths.get(sessionLengths.size()-i)
+                    
+                    histLevels = array.from(
+                         histOpen + qtr, histOpen + half, histOpen + qtr3, 
+                         histOpen + asr, histOpen + asr + qtr, 
+                         histOpen + asr + half, histOpen + asr + qtr3, 
+                         histOpen + asr * 2, histOpen - qtr, histOpen - half, 
+                         histOpen - qtr3, histOpen - asr, histOpen - asr - qtr, 
+                         histOpen - asr - half, histOpen - asr - qtr3, 
+                         histOpen - asr * 2)
+                    
+                    for [idx,lev] in histLevels
+                        setting = colArr.get(idx)
+                        if setting.showLev
+                            lines.push(line.new(histStart, lev, histStart + histLength, lev, 
+                                 xloc.bar_time, extend.none, 
+                                 color.new(setting.levCol, historicalTransp), 
+                                 setting.levStyle, setting.levWidth))
+                            if showLabels
+                                labelText = setting.name + ' (' + str.tostring(lev, format.mintick) + ')'
+                                labels.push(label.new(labPos == 'Left' ? histStart : histStart + histLength, 
+                                     lev, labelText, xloc.bar_time, 
+                                     color = color.new(color.white,100), 
+                                     style = labPos == 'Left' ? label.style_label_right : label.style_label_left, 
+                                     textcolor = color.new(setting.levCol, historicalTransp)))
 
 if barstate.islast
     asrLabel.cell(0,0, 'ASR: $' + str.tostring(asr,format.mintick), text_color = tableTextColor, text_size = tableTextSize.txtSize())
