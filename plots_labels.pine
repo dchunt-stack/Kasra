@@ -1,0 +1,172 @@
+//@version=5
+indicator("Session Times", overlay=true)
+
+// Session and timezone selection parameters
+session_type = input.string(
+     defval="Day Session (RTH)", 
+     options=["Day Session (RTH)", "Overnight Session (ON)", "FX-Tokyo", "FX-London", "FX-New York", "Custom"], 
+     title="Select Session Type",
+     group="SESSION SETTINGS")
+
+custom_session_times_inp = input.session(
+     defval="0830-1500", 
+     title="Custom Session", 
+     group="SESSION SETTINGS")
+
+// ASR period inputs
+asr_period_1 = input.int(14, "ASR Period 1", minval=1, maxval=100, group="ASR SETTINGS")
+asr_period_2 = input.int(7, "ASR Period 2", minval=1, maxval=100, group="ASR SETTINGS")
+
+// Visualization toggles
+show_session_background = input.bool(true, "Show Session Background", group="VISUALIZATION")
+show_session_lines = input.bool(true, "Show Session High/Low", group="VISUALIZATION")
+show_period1_lines = input.bool(true, "Show Period 1 ASR", group="VISUALIZATION")  // renamed from 14p
+show_period2_lines = input.bool(true, "Show Period 2 ASR", group="VISUALIZATION")  // renamed from 7p
+
+// Line style inputs
+var_session_high_color = input.color(color.red, "Session High Color", group="LINES")
+var_session_low_color = input.color(color.green, "Session Low Color", group="LINES")
+var_period1_color = input.color(color.white, "Period 1 Color", group="LINES")     // renamed from 14p
+var_period2_color = input.color(color.yellow, "Period 2 Color", group="LINES")    // renamed from 7p
+var_session_width = input.int(2, "Session Line Width", minval=1, maxval=4, group="LINES")
+var_asr_width = input.int(1, "ASR Line Width", minval=1, maxval=4, group="LINES")
+
+// Track session values and ranges
+var float curr_session_high = na
+var float curr_session_low = na
+var float prev_session_high = na
+var float prev_session_low = na
+var float[] session_ranges_p1 = array.new_float(0)  // renamed from 14
+var float[] session_ranges_p2 = array.new_float(0)  // renamed from 7
+
+// Session times function
+setSessionTimes() =>
+    var string session_times = ""
+    var string session_timezone = ""
+    
+    if syminfo.type == "stock"
+        session_times := "0930-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Day Session (RTH)"
+        if syminfo.root == "ES" or syminfo.root == "NQ" or syminfo.root == "YM"
+            session_times := "0830-1500"
+            session_timezone := "America/Chicago"
+        else if syminfo.root == "CL" or syminfo.root == "GC" or syminfo.root == "SI"
+            session_times := "0830-1330"
+            session_timezone := "America/New_York"
+        else
+            session_times := "0830-1500"
+            session_timezone := "America/New_York"
+    else if session_type == "Overnight Session (ON)"
+        session_times := "1800-0830"
+    else if session_type == "FX-Tokyo"
+        session_times := "0900-1500"
+        session_timezone := "Asia/Tokyo"
+    else if session_type == "FX-London"
+        session_times := "0800-1600"
+        session_timezone := "Europe/London"
+    else if session_type == "FX-New York"
+        session_times := "0800-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Custom"
+        session_times := custom_session_times_inp
+    
+    [session_times, session_timezone]
+
+// Get session times
+[session_times, session_timezone] = setSessionTimes()
+
+// Determine if we're in session
+inSession = not na(time(timeframe.period, session_times, session_timezone))
+
+// Handle special case for stocks in extended hours
+if syminfo.type == "stock" and syminfo.session == session.extended and not session.ismarket
+    inSession := false
+
+// Update current session high/low
+if inSession
+    if na(curr_session_high) or high > curr_session_high
+        curr_session_high := high
+    if na(curr_session_low) or low < curr_session_low
+        curr_session_low := low
+
+// When session ends, update values and ranges
+if not inSession and inSession[1]
+    prev_session_high := curr_session_high
+    prev_session_low := curr_session_low
+    
+    // Calculate and store session range
+    float session_range = curr_session_high - curr_session_low
+    array.push(session_ranges_p1, session_range)
+    array.push(session_ranges_p2, session_range)
+    
+    // Keep only last N sessions
+    if array.size(session_ranges_p1) > asr_period_1
+        array.shift(session_ranges_p1)
+    if array.size(session_ranges_p2) > asr_period_2
+        array.shift(session_ranges_p2)
+    
+    curr_session_high := na
+    curr_session_low := na
+
+// Calculate Average Session Range (ASR)
+float asr_p1 = array.sum(session_ranges_p1) / math.min(asr_period_1, array.size(session_ranges_p1))
+float asr_p2 = array.sum(session_ranges_p2) / math.min(asr_period_2, array.size(session_ranges_p2))
+
+// Calculate dynamic support/resistance levels using ASR
+float ref_price = (high + low) / 2  // using mid price as reference
+float res_level_p1 = ref_price + (asr_p1 / 2)
+float sup_level_p1 = ref_price - (asr_p1 / 2)
+float res_level_p2 = ref_price + (asr_p2 / 2)
+float sup_level_p2 = ref_price - (asr_p2 / 2)
+
+// Plot previous session levels and averages
+var line high_line = na
+var line low_line = na
+var line avg_high_line_p1 = na
+var line avg_low_line_p1 = na
+var line avg_high_line_p2 = na
+var line avg_low_line_p2 = na
+
+if not inSession and inSession[1]
+    if show_session_lines
+        if not na(prev_session_high)
+            line.delete(high_line)
+            high_line := line.new(bar_index, prev_session_high, bar_index + 1, prev_session_high, extend=extend.right, color=var_session_high_color, width=var_session_width)
+        if not na(prev_session_low)
+            line.delete(low_line)
+            low_line := line.new(bar_index, prev_session_low, bar_index + 1, prev_session_low, extend=extend.right, color=var_session_low_color, width=var_session_width)
+    
+    if show_period1_lines
+        if not na(res_level_p1)
+            line.delete(avg_high_line_p1)
+            avg_high_line_p1 := line.new(bar_index, res_level_p1, bar_index + 1, res_level_p1, extend=extend.right, color=var_period1_color, width=var_asr_width)
+        if not na(sup_level_p1)
+            line.delete(avg_low_line_p1)
+            avg_low_line_p1 := line.new(bar_index, sup_level_p1, bar_index + 1, sup_level_p1, extend=extend.right, color=var_period1_color, width=var_asr_width)
+    
+    if show_period2_lines
+        if not na(res_level_p2)
+            line.delete(avg_high_line_p2)
+            avg_high_line_p2 := line.new(bar_index, res_level_p2, bar_index + 1, res_level_p2, extend=extend.right, color=var_period2_color, width=var_asr_width)
+        if not na(sup_level_p2)
+            line.delete(avg_low_line_p2)
+            avg_low_line_p2 := line.new(bar_index, sup_level_p2, bar_index + 1, sup_level_p2, extend=extend.right, color=var_period2_color, width=var_asr_width)
+
+// Table
+bgcolor(show_session_background ? (inSession ? color.new(color.green, 90) : color.new(color.red, 90)) : na)
+
+// Values 
+var table valueTable = table.new(position.bottom_right, 2, 4, bgcolor=color.rgb(0, 0, 0, 80))
+
+if not inSession and inSession[1]
+    // Table Headers 
+    table.cell(valueTable, 0, 0, str.tostring(asr_period_1) + " Period", bgcolor=color.rgb(0, 0, 0, 80), text_color=color.white)
+    table.cell(valueTable, 1, 0, str.tostring(asr_period_2) + " Period", bgcolor=color.rgb(0, 0, 0, 80), text_color=color.yellow)
+    
+    // Table Values
+    table.cell(valueTable, 0, 2, str.tostring(res_level_p1, "#.##"), text_color=color.white)
+    table.cell(valueTable, 1, 2, str.tostring(res_level_p2, "#.##"), text_color=color.yellow)
+    table.cell(valueTable, 0, 3, str.tostring(sup_level_p1, "#.##"), text_color=color.white)
+    table.cell(valueTable, 1, 3, str.tostring(sup_level_p2, "#.##"), text_color=color.yellow)
+

@@ -1,0 +1,276 @@
+// @version=6
+indicator("Average Session Range (ASR)", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// Parameters for session selection
+session_type = input.string(
+     defval="Day Session (RTH)", 
+     options=["Day Session (RTH)", "Overnight Session (ON)", "FX-Tokyo", "FX-London", "FX-New York", "Custom"], 
+     title="Select Session Type",
+     group="SESSION SETTINGS")
+
+custom_session_times_inp = input.session(
+     defval="0830-1500", 
+     title="Custom Session", 
+     group="SESSION SETTINGS")
+
+// ASR calculation settings
+lookback_days = input.int(
+     defval=1, 
+     title="Lookback Days",
+     minval=1,
+     maxval=30,
+     group="ASR CALCULATION")
+
+// Visual settings
+show_asr_high = input.bool(title="Show ASR High", defval=true, inline="asr_high", group="LINES, WIDTHS AND COLORS")
+color_asr_high = input.color(title="", defval=color.new(color.maroon, 0), inline="asr_high", group="LINES, WIDTHS AND COLORS")
+width_asr_high = input.int(title="", defval=2, inline="asr_high", group="LINES, WIDTHS AND COLORS")
+
+show_asr_low = input.bool(title="Show ASR Low", defval=true, inline="asr_low", group="LINES, WIDTHS AND COLORS")
+color_asr_low = input.color(title="", defval=color.new(color.green, 0), inline="asr_low", group="LINES, WIDTHS AND COLORS")
+width_asr_low = input.int(title="", defval=2, inline="asr_low", group="LINES, WIDTHS AND COLORS")
+
+show_asr_fill = input.bool(title="Fill ASR Range", defval=true, inline="asr_fill", group="LINES, WIDTHS AND COLORS")
+color_asr_fill = input.color(title="", defval=color.new(color.blue, 95), inline="asr_fill", group="LINES, WIDTHS AND COLORS")
+
+show_labels = input.bool(true, title="Show Labels", inline="labels", group="MORE SETTINGS")
+label_size = input.string("small", options=["auto", "tiny", "small", "normal", "large", "huge"], title="- size", inline="labels", group="MORE SETTINGS")
+display_value = input.bool(true, title="Show Price Values in Labels", group="MORE SETTINGS")
+labels_offset = input.int(title="Offset labels N bars to the right", defval=20, group="MORE SETTINGS")
+show_days = input.int(title="Show ASR for N days", defval=5, group="MORE SETTINGS")
+
+// Rounding levels to min tick
+nround(x) =>
+    math.round(x / syminfo.mintick) * syminfo.mintick
+
+// Variable definitions
+var float asr_high = na
+var float asr_low = na
+var float[] session_highs = array.new_float(lookback_days, na)
+var float[] session_lows = array.new_float(lookback_days, na)
+var day_changed = ta.change(time("D"))
+var label_prefix = session_type == "Day Session (RTH)" ? "rth" :
+   session_type == "Overnight Session (ON)" ? "on" :
+   session_type == "FX-Tokyo" ? "jp" :
+   session_type == "FX-London" ? "uk" :
+   session_type == "FX-New York" ? "us" : ""
+
+// Line and box variables
+var line asr_high_line = na
+var line asr_low_line = na
+var box asr_box = na
+
+// Label variables
+var label label_asr_high = na
+var label label_asr_low = na
+
+// Remove the line arrays since we only need current session lines
+var labels_ids = array.new_label(show_labels ? 2 * show_days : 0)
+
+// Modify variable definitions to track session values
+var float prev_session_high = na
+var float prev_session_low = na
+var float curr_session_high = high
+var float curr_session_low = low
+
+// Set session times based on selected session type
+setSessionTimes() =>
+    string session_times = ""
+    string session_timezone = syminfo.timezone
+    
+    if syminfo.type == "stock"
+        session_times := "0930-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Day Session (RTH)"
+        if syminfo.root == "ES" or syminfo.root == "NQ" or syminfo.root == "YM"
+            session_times := "0830-1500"
+            session_timezone := "America/Chicago"
+        else if syminfo.root == "CL" or syminfo.root == "GC" or syminfo.root == "SI"
+            session_times := "0830-1330"
+            session_timezone := "America/New_York"
+        else
+            session_times := "0830-1500"
+    else if session_type == "Overnight Session (ON)"
+        if syminfo.root == "ES" or syminfo.root == "NQ" or syminfo.root == "YM"
+            session_times := "1700-0830"
+            session_timezone := "America/Chicago"
+        else if syminfo.root == "CL" or syminfo.root == "GC" or syminfo.root == "SI"
+            session_times := "1800-0830"
+            session_timezone := "America/New_York"
+        else
+            session_times := "1800-0830"
+    else if session_type == "FX-Tokyo"
+        session_times := "0900-1500"
+        session_timezone := "Asia/Tokyo"
+    else if session_type == "FX-London"
+        session_times := "0800-1600"
+        session_timezone := "Europe/London"
+    else if session_type == "FX-New York"
+        session_times := "0800-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Custom"
+        session_times := custom_session_times_inp
+    
+    [session_times, session_timezone]
+
+// Get session times
+[session_times, session_timezone] = setSessionTimes()
+
+// Determine if we're in a session
+session = na(time(timeframe.period, session_times, session_timezone)) ? false : true
+
+// Handle special case for stocks
+if syminfo.type == "stock" and syminfo.session == session.extended and not session.ismarket
+    session := false
+
+// Detect day change for stocks
+stock_changed_day = syminfo.type == "stock" and syminfo.session == session.regular and day_changed != 0
+
+// Track session high/low
+if session
+    curr_session_high := math.max(high, curr_session_high)
+    curr_session_low := math.min(low, curr_session_low)
+
+// Function to calculate ASR
+calculate_asr() =>
+    // Get previous session's high and low
+    float prev_high = array.size(session_highs) > 0 ? array.get(session_highs, 0) : na
+    float prev_low = array.size(session_lows) > 0 ? array.get(session_lows, 0) : na
+    
+    // If using simple previous day's range
+    if lookback_days == 1 or array.size(session_highs) <= 1
+        [prev_high, prev_low]
+    else
+        // Calculate average across lookback period
+        float avg_high = 0.0
+        float avg_low = 0.0
+        int count = 0
+        
+        for i = 0 to array.size(session_highs) - 1
+            float h = array.get(session_highs, i)
+            float l = array.get(session_lows, i)
+            if not na(h) and not na(l)
+                avg_high += h
+                avg_low += l
+                count += 1
+        
+        if count > 0
+            avg_high := avg_high / count
+            avg_low := avg_low / count
+        else
+            avg_high := na
+            avg_low := na
+        
+        [avg_high, avg_low]
+
+// When session ends or day changes for stocks, finalize the session data
+if ((not session and session[1]) or stock_changed_day) and timeframe.isintraday
+    // Update session data arrays
+    if not na(high[1]) and not na(low[1])
+        array.unshift(session_highs, high[1])
+        array.unshift(session_lows, low[1])
+        
+        // Keep arrays at specified size
+        if array.size(session_highs) > lookback_days
+            array.pop(session_highs)
+        if array.size(session_lows) > lookback_days
+            array.pop(session_lows)
+    
+    // Calculate new ASR values
+    [new_asr_high, new_asr_low] = calculate_asr()
+    asr_high := new_asr_high
+    asr_low := new_asr_low
+    
+    // Finish previous lines and boxes
+    if not na(asr_high_line)
+        line.set_x2(asr_high_line, bar_index)
+        line.set_extend(asr_high_line, extend.none)
+    
+    if not na(asr_low_line)
+        line.set_x2(asr_low_line, bar_index)
+        line.set_extend(asr_low_line, extend.none)
+    
+    if not na(asr_box)
+        box.set_right(asr_box, bar_index)
+        box.set_extend(asr_box, extend.none)
+    
+    // Move the labels to the left
+    if not na(label_asr_high)
+        label.set_x(label_asr_high, bar_index - labels_offset / 2)
+    
+    if not na(label_asr_low)
+        label.set_x(label_asr_low, bar_index - labels_offset / 2)
+
+    // Store values
+    prev_session_high := curr_session_high
+    prev_session_low := curr_session_low
+    curr_session_high := high
+    curr_session_low := low
+
+// If inside session and it's a new session
+if session and timeframe.isintraday and (not session[1] or stock_changed_day)
+    // Delete previous lines and boxes
+    if not na(asr_high_line)
+        line.delete(asr_high_line)
+    if not na(asr_low_line)
+        line.delete(asr_low_line)
+    if not na(asr_box)
+        box.delete(asr_box)
+    
+    // Create new ASR lines starting from current bar
+    if show_asr_high and not na(prev_session_high)
+        asr_high_line := line.new(
+             bar_index, prev_session_high, 
+             bar_index + 1, prev_session_high, 
+             color=color_asr_high, 
+             width=width_asr_high, 
+             extend=extend.right)
+    
+    if show_asr_low and not na(prev_session_low)
+        asr_low_line := line.new(
+             bar_index, prev_session_low, 
+             bar_index + 1, prev_session_low, 
+             color=color_asr_low, 
+             width=width_asr_low, 
+             extend=extend.right)
+    
+    if show_asr_fill and not na(asr_high) and not na(asr_low)
+        asr_box := box.new(
+             bar_index, asr_high, 
+             bar_index + 1, asr_low, 
+             border_color=color_asr_fill, 
+             bgcolor=color_asr_fill, 
+             extend=extend.right)
+    
+    if show_labels
+        if not na(asr_high)
+            label_asr_high := label.new(
+                 bar_index + labels_offset, asr_high, 
+                 text=label_prefix + ".ASR.high" + (display_value ? " " + str.tostring(nround(asr_high)) : ""), 
+                 style=label.style_none, 
+                 textcolor=color_asr_high, 
+                 textalign=text.align_left, 
+                 size=label_size)
+            array.push(labels_ids, label_asr_high)
+        
+        if not na(asr_low)
+            label_asr_low := label.new(
+                 bar_index + labels_offset, asr_low, 
+                 text=label_prefix + ".ASR.low" + (display_value ? " " + str.tostring(nround(asr_low)) : ""), 
+                 style=label.style_none, 
+                 textcolor=color_asr_low, 
+                 textalign=text.align_left, 
+                 size=label_size)
+            array.push(labels_ids, label_asr_low)
+
+// When in session, keep updating the label positions
+if session and timeframe.isintraday and show_labels
+    if not na(label_asr_high)
+        label.set_x(label_asr_high, bar_index + labels_offset)
+    
+    if not na(label_asr_low)
+        label.set_x(label_asr_low, bar_index + labels_offset)
+
+// Plot the ASR values for debugging
+plot(asr_high, "ASR High", color=color.new(color_asr_high, 100), display=display.none)
+plot(asr_low, "ASR Low", color=color.new(color_asr_low, 100), display=display.none)

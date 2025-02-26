@@ -1,0 +1,156 @@
+//@version=5
+indicator("Session High/Low with ASR Extensions", overlay=true, shorttitle="Session ASR", dynamic_requests=true)
+
+// ===== SESSION INPUTS =====
+session_type = input.string(
+     defval="Day Session (RTH)", 
+     options=["Day Session (RTH)", "Overnight Session (ON)", "FX-Tokyo", "FX-London", "FX-New York", "Custom"], 
+     title="Select Session Type",
+     group="SESSION SETTINGS")
+
+custom_session_times_inp = input.session(
+     defval="0830-1500", 
+     title="Custom Session", 
+     group="SESSION SETTINGS")
+
+// ===== OTHER INPUTS =====
+period14 = input.int(14, "14-Period", minval=1)
+period7  = input.int(7,  "7-Period",  minval=1)
+
+// ===== SESSION TIMES FUNCTION =====
+setSessionTimes() =>
+    string session_times = ""
+    string session_timezone = syminfo.timezone
+    
+    if syminfo.type == "stock"
+        session_times := "0930-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Day Session (RTH)"
+        if syminfo.root == "ES" or syminfo.root == "NQ" or syminfo.root == "YM"
+            session_times := "0830-1500"
+            session_timezone := "America/Chicago"
+        else if syminfo.root == "CL" or syminfo.root == "GC" or syminfo.root == "SI"
+            session_times := "0830-1330"
+            session_timezone := "America/New_York"
+        else
+            session_times := "0830-1500"
+    else if session_type == "Overnight Session (ON)"
+        if syminfo.root == "ES" or syminfo.root == "NQ" or syminfo.root == "YM"
+            session_times := "1700-0830"
+            session_timezone := "America/Chicago"
+        else if syminfo.root == "CL" or syminfo.root == "GC" or syminfo.root == "SI"
+            session_times := "1800-0830"
+            session_timezone := "America/New_York"
+        else
+            session_times := "1800-0830"
+    else if session_type == "FX-Tokyo"
+        session_times := "0900-1500"
+        session_timezone := "Asia/Tokyo"
+    else if session_type == "FX-London"
+        session_times := "0800-1600"
+        session_timezone := "Europe/London"
+    else if session_type == "FX-New York"
+        session_times := "0800-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Custom"
+        session_times := custom_session_times_inp
+    
+    [session_times, session_timezone]
+
+// Get session times
+[session_times, session_timezone] = setSessionTimes()
+
+// ===== Retrieve Session Data =====
+inSession = not na(time(timeframe.period, session_times, session_timezone))
+
+// Track session values
+var float curr_session_high = na
+var float curr_session_low = na
+var float prev_session_high = na
+var float prev_session_low = na
+// Declare history array before it's used
+var float[] last14ranges = array.new_float(0)
+
+// Update current session high/low
+if inSession
+    if na(curr_session_high) or high > curr_session_high
+        curr_session_high := high
+    if na(curr_session_low) or low < curr_session_low
+        curr_session_low := low
+        
+// When a session ends, update previous session values, calculate range, and reset current session values
+if (not inSession and inSession[1]) and not na(curr_session_high) and not na(curr_session_low)
+    // Store current session values temporarily
+    float tempHigh = curr_session_high
+    float tempLow  = curr_session_low
+
+    // Add session range to history array
+    float sessionRange = tempHigh - tempLow
+    array.unshift(last14ranges, sessionRange)
+    while array.size(last14ranges) > 14
+        array.pop(last14ranges)
+    
+    // Update previous session high/low using stored values
+    prev_session_high := tempHigh
+    prev_session_low  := tempLow
+    
+    // Reset current session values
+    curr_session_high := na
+    curr_session_low  := na
+
+// ===== Plot Session Levels =====
+plot(prev_session_high, title="Session High", color=color.red, linewidth=3)
+plot(prev_session_low,  title="Session Low",  color=color.green, linewidth=3)
+
+// ===== Calculate Daily Ranges =====
+// Calculate separate averages
+float avgRange14 = 0.0
+float avgRange7 = 0.0
+
+if array.size(last14ranges) > 0
+    // 14-period average
+    float sum14 = 0.0
+    int count14 = math.min(14, array.size(last14ranges))
+    for i = 0 to count14 - 1
+        sum14 += array.get(last14ranges, i)
+    avgRange14 := sum14 / count14
+    
+    // 7-period average (using only most recent 7 sessions)
+    float sum7 = 0.0
+    int count7 = math.min(7, array.size(last14ranges))
+    for i = 0 to count7 - 1  // Only loop through first 7 values
+        sum7 += array.get(last14ranges, i)
+    avgRange7 := sum7 / math.min(7, count7)  // Use actual number of values for 7-period
+
+// ===== Calculate Extension Levels =====
+// Extension levels based on previous session high/low plus/minus average ranges
+level14High = prev_session_high + avgRange14
+level14Low  = prev_session_low  - avgRange14
+level7High  = prev_session_high + avgRange7
+level7Low   = prev_session_low  - avgRange7
+
+// ===== Plot Extension Lines =====
+// 14-period extension: solid white lines
+plot(level14High, title="14 High Extension", color=color.white, linewidth=1)
+plot(level14Low,  title="14 Low Extension",  color=color.white, linewidth=1)
+// 7-period extension: using circles style for dotted appearance
+plot(level7High,  title="7 High Extension",  color=color.white, linewidth=1, style=plot.style_circles)
+plot(level7Low,   title="7 Low Extension",   color=color.white, linewidth=1, style=plot.style_circles)
+
+// ===== Create Table for Displaying Values =====
+var table sessionTable = table.new(position.bottom_right, 3, 3, border_width=1)
+if barstate.islast
+    // Header row
+    table.cell(sessionTable, 0, 0, "",       text_color=color.black, bgcolor=color.gray)
+    table.cell(sessionTable, 1, 0, "14",     text_color=color.black, bgcolor=color.gray)
+    table.cell(sessionTable, 2, 0, "7",      text_color=color.black, bgcolor=color.gray)
+    
+    // High row
+    table.cell(sessionTable, 0, 1, "High",  text_color=color.black, bgcolor=color.gray)
+    table.cell(sessionTable, 1, 1, str.tostring(level14High, "#.##"), text_color=color.black, bgcolor=color.white)
+    table.cell(sessionTable, 2, 1, str.tostring(level7High,  "#.##"), text_color=color.black, bgcolor=color.white)
+    
+    // Low row
+    table.cell(sessionTable, 0, 2, "Low",   text_color=color.black, bgcolor=color.gray)
+    table.cell(sessionTable, 1, 2, str.tostring(level14Low, "#.##"), text_color=color.black, bgcolor=color.white)
+    table.cell(sessionTable, 2, 2, str.tostring(level7Low,  "#.##"), text_color=color.black, bgcolor=color.white)

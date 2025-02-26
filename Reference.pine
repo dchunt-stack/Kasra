@@ -1,0 +1,128 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © QuantVue
+
+//@version=5
+indicator('Average Session Range [QuantVue]', shorttitle = 'ASR [QuantVue]', overlay = true)
+
+//----------settings----------//
+var g0          = 'Sessions'
+sesh1time       = input.session('1300-2200', 'Session Time', inline = '0', group = g0)
+tz              = input.string('GMT-4', 'Time Zone', tooltip = 'GMT and UTC is the same thing \nMatch this setting to bottom right time', options = ['GMT-10', 'GMT-9', 'GMT-8', 'GMT-7', 'GMT-6', 'GMT-5', 'GMT-4', 'GMT-3', 'GMT+0', 'GMT+1', 'GMT+2', 'GMT+3', 'GMT+4', 'GMT+5', 'GMT+6', 'GMT+7', 'GMT+8', 'GMT+9', 'GMT+10', 'GMT+10:30', 'GMT+11', 'GMT+12', 'GMT+13', 'GMT+13:45'], group = g0)
+length          = input.int(14, 'ASR Length')
+
+var g1          = 'Lines'
+showLines       = input.bool(true, 'Show Lines', group = g1)
+showLabels      = input.bool(true, 'Show Labels', group = g1, inline = '01')
+labPos          = input.string('Left', '', options=['Left', 'Right'], group= g1, inline = '01')
+halfBool        = input.bool(true, '', inline = '2', group = g1)
+halfCol         = input.color(color.green, '0.50 ASR‏ ‏ ‏ ‏', inline = '2', group = g1)
+halfWidth       = input.int(1, '', inline = '2', group = g1)
+halfStyle       = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = '2', group = g1)
+
+var g3          = 'ASR Label'
+yPos            = input.string('Bottom', 'Position ', options = ['Top', 'Middle', 'Bottom'], inline = '00', group = g3)
+xPos            = input.string('Right', ' ', options = ['Right','Center', 'Left'], inline = '00', group = g3)
+tableBgColor    = input.color(color.white, 'Background Color', group = g3)
+tableTextSize   = input.string('Normal', 'Size', options = ['Tiny','Small','Normal','Large','Huge'], inline = '0', group = g3)
+tableTextColor  = input.color(color.black, 'Text Color', inline = '0', group = g3)
+
+//----------methods----------//
+method styler(string this)=>
+    switch this
+        'Solid'  => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+
+method txtSize(string this)=>
+    switch this
+        'Tiny'      => size.tiny
+        'Small'     => size.small
+        'Normal'    => size.normal
+        'Large'     => size.large
+        'Huge'      => size.huge
+
+//----------udt----------//
+type lineDrawing
+    color   levCol
+    int     levWidth
+    string  levStyle
+    bool    showLev
+    string  name
+
+var colArr = array.from(
+         lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '.50 ASR'),
+         lineDrawing.new(halfCol, halfWidth, halfStyle.styler(), halfBool, '-.50 ASR'))
+
+//----------sessions----------//
+session         = time(timeframe.period, sesh1time, tz)
+startSession    = not na(session) and na(session[1])
+endSession      = na(session) and not na(session[1])
+
+split           = str.split(sesh1time,'-')
+start           = split.get(0)
+end             = split.get(1)
+
+startHour       = str.tonumber(str.substring(start,0,2))
+startMin        = str.tonumber(str.substring(start,2,4))
+endHour         = str.tonumber(str.substring(end,0,2))
+endMin          = str.tonumber(str.substring(end,2,4))
+
+startTime       = timestamp(year, month, dayofweek, int(startHour), int(startMin))
+int endTime     = na
+
+if endHour < startHour
+    endTime := timestamp(year, month, dayofweek+1, int(endHour), int(endMin))
+else
+    endTime := timestamp(year, month, dayofweek, int(endHour), int(endMin))
+
+sessionLength = endTime - startTime
+
+//----------variables----------//
+var sessionRanges       = array.new<float>()
+var lines               = array.new<line>()
+var labels              = array.new<label>()
+var float sessionHigh   = na
+var float sessionLow    = na
+var float sessionOpen   = na
+var table asrLabel      = table.new(str.lower(yPos) + '_' + str.lower(xPos), 1, 1, tableBgColor, color.new(color.white,100), 1, color.new(color.white,100), 1)
+
+//----------session data----------//
+if startSession
+    sessionHigh := high      // Initialize session high with first bar's high
+    sessionLow  := low       // Initialize session low with first bar's low
+    sessionOpen := open      // Capture session's opening price
+
+if time == session
+    sessionHigh := math.max(sessionHigh,high)    // Update session high if new high occurs
+    sessionLow  := math.min(sessionLow,low)      // Update session low if new low occurs
+
+if endSession
+    sessionRanges.push(sessionHigh-sessionLow)   // Calculate and store session's range
+    if sessionRanges.size() > length
+        sessionRanges.shift()                    // Remove oldest range if exceeding length
+
+//----------conditions----------//
+asr     = sessionRanges.size() > 0 ? sessionRanges.avg() : na    // Calculate average of stored ranges
+half    = asr / 2                                                 // Calculate half of ASR
+
+asrArr = array.from(sessionOpen + half, sessionOpen - half)
+
+//----------lines-----------//
+if startSession
+    for l in lines
+        l.delete()
+    for l in labels
+        l.delete()
+    labels.clear()
+    lines.clear()
+    if showLines
+        for [idx,lev] in asrArr
+            setting = colArr.get(idx)
+            if setting.showLev
+                lines.push(line.new(time, lev, time + sessionLength, lev, xloc.bar_time, extend.none, setting.levCol, setting.levStyle, setting.levWidth))
+                if showLabels
+                    labels.push(label.new(labPos == 'Left' ? time : time + sessionLength, lev, setting.name + ' (' + str.tostring(lev,format.mintick) + ')', 
+                         xloc.bar_time, color = color.new(color.white,100), style = labPos == 'Left' ? label.style_label_right : label.style_label_left, textcolor = setting.levCol))
+
+if barstate.islast
+    asrLabel.cell(0,0, 'ASR: $' + str.tostring(asr,format.mintick), text_color = tableTextColor, text_size = tableTextSize.txtSize())

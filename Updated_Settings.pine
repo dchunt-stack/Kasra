@@ -1,0 +1,354 @@
+//@version=6
+indicator("ASR Kasra)", overlay=true)
+
+// ─── SESSION SETTINGS ──────────────────────────────────────────────────────────
+session_type                = input.string(
+                                 defval="Day Session (RTH)", 
+                                 options=["Day Session (RTH)", "Overnight Session (ON)", "FX-Tokyo", "FX-London", "FX-New York", "Custom"], 
+                                 title="Select Session Type",
+                                 group="SESSION SETTINGS")
+
+// Inputs 
+rthSessionTimes             = input.session("0830-1500", title="Day Session (RTH) Times",                           group="SESSION SETTINGS")
+overnightSessionTimes       = input.session("1800-0830", title="Overnight Session (ON) Times",                      group="SESSION SETTINGS")
+fxTokyoSessionTimes         = input.session("0900-1500", title="FX Tokyo Session Times",                            group="SESSION SETTINGS")
+fxLondonSessionTimes        = input.session("0930-1600", title="FX London Session Times",                           group="SESSION SETTINGS")
+fxNewYorkSessionTimes       = input.session("0800-1600", title="FX New York Session Times",                         group="SESSION SETTINGS")
+
+// Custom Session
+custom_session_times_inp    = input.session("0830-1500", title="Custom Session",                                    group="SESSION SETTINGS")
+
+// ─── ASR SETTINGS ─────────────────────────────────────────────────────────────
+asr_period_1                = input.int(14, "ASR Period 1", minval=1, maxval=100,                                   group="ASR SETTINGS")
+asr_period_2                = input.int(7, "ASR Period 2", minval=1, maxval=100,                                    group="ASR SETTINGS")
+show_period1_lines          = input.bool(true, "Show Period 1 ASR",                                                 group="ASR SETTINGS")
+show_period2_lines          = input.bool(true, "Show Period 2 ASR",                                                 group="ASR SETTINGS")
+show_prev_sessions          = input.int(5, "Show Sessions", minval=1, maxval=14,                                    group="ASR SETTINGS")
+
+// ─── ASR VISUAL SETTINGS ───────────────────────────────────────────────────────
+line_style_p1               = input.string("Solid",  "Period 1 Style", options=["Solid", "Dotted", "Dashed"],       group="ASR VISUAL SETTINGS")
+line_style_p2               = input.string("Dotted", "Period 2 Style", options=["Solid", "Dotted", "Dashed"],       group="ASR VISUAL SETTINGS")
+var_p1_width                = input.int(1, "Period 1 Width", minval=1, maxval=4,                                    group="ASR VISUAL SETTINGS")
+var_p2_width                = input.int(1, "Period 2 Width", minval=1, maxval=4,                                    group="ASR VISUAL SETTINGS")
+var_period1_color           = input.color(color.white,  "Period 1 Color",                                         group="ASR VISUAL SETTINGS")
+var_period2_color           = input.color(color.white, "Period 2 Color",                                          group="ASR VISUAL SETTINGS")
+show_color_fills            = input.bool(true, "Show Support/Resistance Zones",                                     group="ASR VISUAL SETTINGS")
+var_fill_res_color          = input.color(color.new(color.red,   40), "Resistance Fill Color",                    group="ASR VISUAL SETTINGS")
+var_fill_sup_color          = input.color(color.new(color.green, 40), "Support Fill Color",                       group="ASR VISUAL SETTINGS")
+
+// ─── PARTIAL ASR (10%) ───────────────────────────────────────────────────────
+show_partial_asr_lines      = input.bool(true, "Show 10% ASR Lines", group="PARTIAL ASR")
+partial_asr_percentage      = input.float(20.0, "Partial ASR Percentage", minval=1.0, maxval=50.0, step=0.5,        group="PARTIAL ASR")
+var_partial_asr_color       = input.color(color.white, "Partial ASR Color",                                       group="PARTIAL ASR")
+var_partial_asr_width       = input.int(1, "Partial ASR Width", minval=1, maxval=4,                                 group="PARTIAL ASR")
+partial_asr_style           = input.string("Dotted", "Partial ASR Style", options=["Solid", "Dotted", "Dashed"],    group="PARTIAL ASR")
+
+// ─── TABLE ──────────────────────────────────────────────────────────────────
+table_theme                 = input.string("Dark", "Table Theme", options=["Dark", "Light"],                        group="TABLE")
+table_size                  = input.string("Medium", "Table Size", options=["Small", "Medium", "Large"],            group="TABLE")
+
+// ─── HELPER: CONVERT STYLE STRING TO line.style ──────────────────────────────
+getLineStyle(style) =>
+     style == "Solid"  ? line.style_solid  :
+     style == "Dotted" ? line.style_dotted :
+     style == "Dashed" ? line.style_dashed :
+                         line.style_solid
+
+// ─── HELPER: GET SIZE BASED ON TABLE SIZE SELECTION ───────────────────────────
+getTextSize() =>
+    if table_size == "Small"
+        size.small
+    else if table_size == "Medium"
+        size.normal
+    else
+        size.large
+    
+getCellHeight() => (
+         table_size == "Small" ? 1 :
+         table_size == "Medium" ? 2 :
+         3)
+    
+getCellWidth() => (
+         table_size == "Small" ? 3 :
+         table_size == "Medium" ? 4 :
+         5)
+
+// ─── TRACK SESSION VALUES ─────────────────────────────────────────────────────
+var float curr_session_high = na
+var float curr_session_low  = na
+var float prev_session_high = na
+var float prev_session_low  = na
+
+var float[] session_ranges_p1 = array.new_float(0)
+var float[] session_ranges_p2 = array.new_float(0)
+
+// ─── ARRAYS OF PREVIOUS SESSION LINES ────────────────────────────────────────
+var line[] prev_high_lines              = array.new_line()
+var line[] prev_low_lines               = array.new_line()
+var line[] prev_asr_high_p1_lines       = array.new_line()
+var line[] prev_asr_low_p1_lines        = array.new_line()
+var line[] prev_asr_high_p2_lines       = array.new_line()
+var line[] prev_asr_low_p2_lines        = array.new_line()
+var line[] prev_partial_high_asr_lines  = array.new_line()
+var line[] prev_partial_low_asr_lines   = array.new_line()
+
+// ─── BOX ARRAYS ──────────────────────────────────────────────────────────────
+var box[] prev_res_zone_p1_boxes = array.new_box()
+var box[] prev_sup_zone_p1_boxes = array.new_box()
+var box[] prev_res_fill_boxes    = array.new_box()
+var box[] prev_sup_fill_boxes    = array.new_box()
+
+// ─── SESSION TIMES FUNCTION ──────────────────────────────────────────────────
+setSessionTimes() =>
+    var string session_times    = ""
+    var string session_timezone = ""
+    
+    // For stock type, keep default (or adjust as needed)
+    if syminfo.type == "stock"
+        session_times    := "0930-1600"
+        session_timezone := "America/New_York"
+    else if session_type == "Day Session (RTH)"
+        session_times    := rthSessionTimes
+        session_timezone := "America/New_York"
+    else if session_type == "Overnight Session (ON)"
+        session_times    := overnightSessionTimes
+        session_timezone := "America/New_York"
+    else if session_type == "FX-Tokyo"
+        session_times    := fxTokyoSessionTimes
+        session_timezone := "Asia/Tokyo"
+    else if session_type == "FX-London"
+        session_times    := fxLondonSessionTimes
+        session_timezone := "Europe/London"
+    else if session_type == "FX-New York"
+        session_times    := fxNewYorkSessionTimes
+        session_timezone := "America/New_York"
+    else if session_type == "Custom"
+        session_times    := custom_session_times_inp
+        session_timezone := syminfo.timezone
+    
+    [session_times, session_timezone]
+
+// ─── GET SESSION TIMES ────────────────────────────────────────────────────────
+[session_times, session_timezone] = setSessionTimes()
+
+// ─── DETERMINE IF WE'RE IN SESSION ───────────────────────────────────────────
+inSession = not na(time(timeframe.period, session_times, session_timezone))
+
+// Handle special case for stocks in extended hours
+if syminfo.type == "stock" and syminfo.session == session.extended and not session.ismarket
+    inSession := false
+
+// ─── UPDATE CURRENT SESSION HIGH/LOW ─────────────────────────────────────────
+if inSession
+    if na(curr_session_high) or high > curr_session_high
+        curr_session_high := high
+    if na(curr_session_low) or low < curr_session_low
+        curr_session_low := low
+
+// ─── WHEN SESSION ENDS, STORE PREVIOUS VALUES ────────────────────────────────
+if not inSession and inSession[1]
+    prev_session_high := curr_session_high
+    prev_session_low  := curr_session_low
+    
+    // Calculate & store session range
+    float session_range = curr_session_high - curr_session_low
+    array.push(session_ranges_p1, session_range)
+    array.push(session_ranges_p2, session_range)
+    
+    // Keep only last N sessions
+    if array.size(session_ranges_p1) > asr_period_1
+        array.shift(session_ranges_p1)
+    if array.size(session_ranges_p2) > asr_period_2
+        array.shift(session_ranges_p2)
+    
+    curr_session_high := na
+    curr_session_low  := na
+
+// ─── CALCULATE ASR ───────────────────────────────────────────────────────────
+float asr_p1 = array.size(session_ranges_p1) > 0
+     ? array.sum(session_ranges_p1) / math.min(asr_period_1, array.size(session_ranges_p1))
+     : na
+
+float asr_p2 = array.size(session_ranges_p2) > 0
+     ? array.sum(session_ranges_p2) / math.min(asr_period_2, array.size(session_ranges_p2))
+     : na
+
+// ─── DYNAMIC SUP/RES LEVELS USING ASR ────────────────────────────────────────
+float ref_price    = (high + low) / 2
+float res_level_p1 = ref_price + (asr_p1 / 2)
+float sup_level_p1 = ref_price - (asr_p1 / 2)
+float res_level_p2 = ref_price + (asr_p2 / 2)
+float sup_level_p2 = ref_price - (asr_p2 / 2)
+
+// ─── PARTIAL ASR LINES (10%) ─────────────────────────────────────────────────
+float partial_factor = partial_asr_percentage / 100
+float partial_res_level = res_level_p1 - (asr_p1 * partial_factor)
+float partial_sup_level = sup_level_p1 + (asr_p1 * partial_factor)
+
+// ─── TRACK SESSION TIMING & PROJECTED END ────────────────────────────────────
+var int session_start_bar  = na
+var int projected_end_bar  = na
+
+// When session *begins*, compute an approximate "next session start" bar
+if inSession and not inSession[1]
+    session_start_bar := bar_index
+    current_session_time = time('1', session_times, session_timezone)
+    session_end_time     = current_session_time + (1000 * 60 * 60 * 23)
+    if not na(current_session_time)
+        
+        projected_end_bar := bar_index + math.round(
+             (session_end_time - current_session_time) / (timeframe.in_seconds() * 1000))
+
+// ─── WHEN SESSION ENDS, DRAW LINES FOR THE ENDED SESSION ───────────────
+if not inSession and inSession[1]
+    // Clean up oldest lines so we only keep `show_prev_sessions`
+    while array.size(prev_high_lines) >= show_prev_sessions
+        line.delete(array.shift(prev_high_lines))
+        line.delete(array.shift(prev_low_lines))
+    
+    while array.size(prev_asr_high_p1_lines) >= show_prev_sessions
+        line.delete(array.shift(prev_asr_high_p1_lines))
+        line.delete(array.shift(prev_asr_low_p1_lines))
+        line.delete(array.shift(prev_asr_high_p2_lines))
+        line.delete(array.shift(prev_asr_low_p2_lines))
+    
+    while array.size(prev_partial_high_asr_lines) >= show_prev_sessions
+        line.delete(array.shift(prev_partial_high_asr_lines))
+    while array.size(prev_partial_low_asr_lines) >= show_prev_sessions
+        line.delete(array.shift(prev_partial_low_asr_lines))
+    
+    while array.size(prev_res_fill_boxes) >= show_prev_sessions
+        box.delete(array.shift(prev_res_fill_boxes))
+    while array.size(prev_sup_fill_boxes) >= show_prev_sessions
+        box.delete(array.shift(prev_sup_fill_boxes))
+
+    // Draw ASR lines (Period 1) from session_start_bar to projected_end_bar
+    if show_period1_lines and not na(res_level_p1) and not na(sup_level_p1)
+        line new_asr_high_p1 = line.new(
+             session_start_bar, res_level_p1, 
+             projected_end_bar, res_level_p1,
+             color=color.new(var_period1_color, 40),
+             width=var_p1_width, 
+             style=line.style_solid)
+        
+        line new_asr_low_p1 = line.new(
+             session_start_bar, sup_level_p1,
+             projected_end_bar, sup_level_p1,
+             color=color.new(var_period1_color, 40),
+             width=var_p1_width,
+             style=line.style_solid)
+        
+        
+        
+        array.push(prev_asr_high_p1_lines, new_asr_high_p1)
+        array.push(prev_asr_low_p1_lines,  new_asr_low_p1)
+
+        
+        // Partial ASR lines (10% inside P1)
+        if show_partial_asr_lines and not na(partial_res_level) and not na(partial_sup_level)
+            var_partial_style = getLineStyle(partial_asr_style)
+            line new_partial_high = line.new(
+                 session_start_bar, partial_res_level, 
+                 projected_end_bar, partial_res_level,
+                 color=color.new(var_partial_asr_color, 60),
+                 width=var_partial_asr_width, 
+                 style=var_partial_style)
+            line new_partial_low = line.new(
+                 session_start_bar, partial_sup_level,
+                 projected_end_bar, partial_sup_level,
+                 color=color.new(var_partial_asr_color, 60),
+                 width=var_partial_asr_width,
+                 style=var_partial_style)
+            
+            array.push(prev_partial_high_asr_lines, new_partial_high)
+            array.push(prev_partial_low_asr_lines,  new_partial_low)
+
+    // Draw ASR lines (Period 2) from session_start_bar to projected_end_bar
+    if show_period2_lines and not na(res_level_p2) and not na(sup_level_p2)
+        line new_asr_high_p2 = line.new(
+             session_start_bar, res_level_p2, 
+             projected_end_bar, res_level_p2,
+             color=color.new(var_period2_color, 60),
+             width=var_p2_width, 
+             style=getLineStyle(line_style_p2))
+        line new_asr_low_p2 = line.new(
+             session_start_bar, sup_level_p2,
+             projected_end_bar, sup_level_p2,
+             color=color.new(var_period2_color, 60),
+             width=var_p2_width,
+             style=getLineStyle(line_style_p2))
+        
+        array.push(prev_asr_high_p2_lines, new_asr_high_p2)
+        array.push(prev_asr_low_p2_lines,  new_asr_low_p2)
+
+    // Fill between P1 & P2 lines if enabled
+    if show_color_fills and show_period1_lines and show_period2_lines and not na(res_level_p1) and not na(res_level_p2) and not na(sup_level_p1) and not na(sup_level_p2)
+        box new_res_fill = box.new(
+             session_start_bar, math.max(res_level_p1, res_level_p2), 
+             projected_end_bar, math.min(res_level_p1, res_level_p2),
+             border_color = na,
+             bgcolor = var_fill_res_color)
+        box new_sup_fill = box.new(
+             session_start_bar, math.max(sup_level_p1, sup_level_p2), 
+             projected_end_bar, math.min(sup_level_p1, sup_level_p2),
+             border_color = na,
+             bgcolor = var_fill_sup_color)
+        
+        array.push(prev_res_fill_boxes, new_res_fill)
+        array.push(prev_sup_fill_boxes, new_sup_fill)
+
+// Clean up older boxes (zones, etc.) beyond `show_prev_sessions`
+while array.size(prev_res_zone_p1_boxes) >= show_prev_sessions
+    box.delete(array.shift(prev_res_zone_p1_boxes))
+while array.size(prev_sup_zone_p1_boxes) >= show_prev_sessions
+    box.delete(array.shift(prev_sup_zone_p1_boxes))
+
+// ─── TABLE  ────────────────────────────────────────────────
+// Get text size based on table_size
+var text_size = getTextSize()
+var cell_height = getCellHeight()
+var cell_width = getCellWidth()
+
+var table valueTable = table.new(position.bottom_right, 2, 5, 
+     bgcolor=color.new(color.black, 100),  // Fully transparent background
+     border_width=1,
+     border_color=table_theme == "Dark" ? color.white : color.black)
+
+if not inSession and inSession[1]
+    text_color = table_theme == "Dark" ? color.white : color.black
+    
+    // Table Headers 
+    table.cell(valueTable, 0, 0, str.tostring(asr_period_1), 
+         bgcolor=color.new(color.black, 100),  // Fully transparent
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
+    table.cell(valueTable, 1, 0, str.tostring(asr_period_2), 
+         bgcolor=color.new(color.black, 100),
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
+    
+    // Table Values
+    table.cell(valueTable, 0, 2, str.tostring(res_level_p1, "#.##"), 
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
+    table.cell(valueTable, 1, 2, str.tostring(res_level_p2, "#.##"), 
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
+    table.cell(valueTable, 0, 3, str.tostring(sup_level_p1, "#.##"), 
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
+    table.cell(valueTable, 1, 3, str.tostring(sup_level_p2, "#.##"), 
+         text_color=text_color,
+         text_size=text_size,
+         height=cell_height,
+         width=cell_width)
