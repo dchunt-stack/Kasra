@@ -9,9 +9,6 @@ var g0          = 'Sessions'
 sesh1time       = input.session('1300-2200', 'Session Time', inline = '0', group = g0)
 tz              = input.string('GMT-4', 'Time Zone', tooltip = 'GMT and UTC is the same thing \nMatch this setting to bottom right time', options = ['GMT-10', 'GMT-9', 'GMT-8', 'GMT-7', 'GMT-6', 'GMT-5', 'GMT-4', 'GMT-3', 'GMT+0', 'GMT+1', 'GMT+2', 'GMT+3', 'GMT+4', 'GMT+5', 'GMT+6', 'GMT+7', 'GMT+8', 'GMT+9', 'GMT+10', 'GMT+10:30', 'GMT+11', 'GMT+12', 'GMT+13', 'GMT+13:45'], group = g0)
 length          = input.int(14, 'ASR Length')
-showHistorical  = input.bool(true, 'Show Historical Sessions', group = g0)
-historicalCount = input.int(5, 'Number of Historical Sessions', minval=1, maxval=14, group = g0)
-historicalTransp = input.int(50, 'Historical Transparency %', minval=0, maxval=90, group = g0)
 
 var g1           = 'Lines'
 showLines       = input.bool(true, 'Show Lines', group = g1)
@@ -119,24 +116,12 @@ var float sessionHigh   = na
 var float sessionLow    = na
 var float sessionOpen   = na
 var table asrLabel      = table.new(str.lower(yPos) + '_' + str.lower(xPos), 1, 1, tableBgColor, color.new(color.white,100), 1, color.new(color.white,100), 1)
-var sessionOpens       = array.new<float>()  // Store historical opens
-var sessionStarts      = array.new<int>()    // Store session start times
-var sessionLengths     = array.new<int>()    // Store session lengths
 
 //----------session data----------//
 if startSession
     sessionHigh := high
     sessionLow  := low
     sessionOpen := open
-    // Store session data at the start instead of end
-    sessionOpens.push(sessionOpen)
-    sessionStarts.push(time)
-    sessionLengths.push(sessionLength)
-    
-    if sessionOpens.size() > length * 2  // Keep double length for history
-        sessionOpens.shift()
-        sessionStarts.shift()
-        sessionLengths.shift()
 
 if time == session
     sessionHigh := math.max(sessionHigh,high)
@@ -144,7 +129,7 @@ if time == session
 
 if endSession
     sessionRanges.push(sessionHigh-sessionLow)
-    if sessionRanges.size() > length * 2
+    if sessionRanges.size() > length
         sessionRanges.shift()
 
 //----------conditions----------//
@@ -166,47 +151,13 @@ if startSession
     labels.clear()
     lines.clear()
     if showLines
-        // Draw current session
         for [idx,lev] in asrArr
             setting = colArr.get(idx)
             if setting.showLev
                 lines.push(line.new(time, lev, time + sessionLength, lev, xloc.bar_time, extend.none, setting.levCol, setting.levStyle, setting.levWidth))
                 if showLabels
-                    labelText = setting.name + ' (' + str.tostring(lev, format.mintick) + ')'
-                    labels.push(label.new(labPos == 'Left' ? time : time + sessionLength, lev, labelText,
+                    labels.push(label.new(labPos == 'Left' ? time : time + sessionLength, lev, setting.name + ' (' + str.tostring(lev,format.mintick) + ')', 
                          xloc.bar_time, color = color.new(color.white,100), style = labPos == 'Left' ? label.style_label_right : label.style_label_left, textcolor = setting.levCol))
-    
-        // Draw historical sessions only if we have enough data
-        if showHistorical and sessionOpens.size() > 1
-            for i = 1 to math.min(historicalCount, sessionOpens.size()-1)
-                if i < sessionOpens.size()
-                    histOpen = sessionOpens.get(sessionOpens.size()-i)
-                    histStart = sessionStarts.get(sessionStarts.size()-i)
-                    histLength = sessionLengths.get(sessionLengths.size()-i)
-                    
-                    histLevels = array.from(
-                         histOpen + qtr, histOpen + half, histOpen + qtr3, 
-                         histOpen + asr, histOpen + asr + qtr, 
-                         histOpen + asr + half, histOpen + asr + qtr3, 
-                         histOpen + asr * 2, histOpen - qtr, histOpen - half, 
-                         histOpen - qtr3, histOpen - asr, histOpen - asr - qtr, 
-                         histOpen - asr - half, histOpen - asr - qtr3, 
-                         histOpen - asr * 2)
-                    
-                    for [idx,lev] in histLevels
-                        setting = colArr.get(idx)
-                        if setting.showLev
-                            lines.push(line.new(histStart, lev, histStart + histLength, lev, 
-                                 xloc.bar_time, extend.none, 
-                                 color.new(setting.levCol, historicalTransp), 
-                                 setting.levStyle, setting.levWidth))
-                            if showLabels
-                                labelText = setting.name + ' (' + str.tostring(lev, format.mintick) + ')'
-                                labels.push(label.new(labPos == 'Left' ? histStart : histStart + histLength, 
-                                     lev, labelText, xloc.bar_time, 
-                                     color = color.new(color.white,100), 
-                                     style = labPos == 'Left' ? label.style_label_right : label.style_label_left, 
-                                     textcolor = color.new(setting.levCol, historicalTransp)))
 
 if barstate.islast
     asrLabel.cell(0,0, 'ASR: $' + str.tostring(asr,format.mintick), text_color = tableTextColor, text_size = tableTextSize.txtSize())

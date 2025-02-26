@@ -1,0 +1,383 @@
+//----------KASRA----------//
+//@version=6
+indicator('Average Session Range [Kasra]', shorttitle = 'ASR [Kasra]', overlay = true)
+
+//----------SESSION SETTINGS----------//
+var G1 = 'Session Settings'
+
+session_type    = input.string(
+                     defval="Day Session (RTH)", 
+                     options=["Day Session (RTH)", "Overnight Session (ON)", "FX-Tokyo", "FX-London", "FX-New York", "Custom"], 
+                     title="Select Session Type",
+                     group = G1)
+
+// Session Times Inputs
+rthSessionTimes         = input.session("0830-1500", "Day Session (RTH) Times", group=G1)
+overnightSessionTimes   = input.session("1800-0830", "Overnight Session (ON) Times", group=G1)
+fxTokyoSessionTimes     = input.session("0900-1500", "FX Tokyo Session Times", group=G1)
+fxLondonSessionTimes    = input.session("0800-1700", "FX London Session Times", group=G1)
+fxNewYorkSessionTimes   = input.session("0800-1600", "FX New York Session Times", group=G1)
+customSessionTimes      = input.session("0800-2200", "Custom Session Time", group=G1)
+
+//----------ASR SETTINGS----------//
+var G2 = 'ASR Settings'
+
+length1         = input.int(14, 'ASR Period 1', group = G2)
+length2         = input.int(7, 'ASR Period 2', group = G2)
+showHistorical  = input.bool(true, 'Show Historical Sessions', group = G2)
+historicalCount = input.int(5, 'Number of Historical Sessions', minval=1, maxval=14, group = G2)
+
+//----------ASR RANGE SETTINGS----------//
+var G3 = 'ASR Range Settings'
+
+showLines       = input.bool(true, 'Show Lines', group = G3)
+
+// ASR1 Settings
+asr1Bool        = input.bool(true, '', inline = 'asr1', group = G3)
+asr1Col         = input.color(color.white, 'ASR1', inline = 'asr1', group = G3)
+asr1Width       = input.int(1, '', inline = 'asr1', group = G3)
+asr1Style       = input.string('Solid', '', ['Solid', 'Dashed', 'Dotted'], inline = 'asr1', group = G3)
+
+// ASR2 Settings
+asr2Bool        = input.bool(true, '', inline = 'asr2', group = G3)
+asr2Col         = input.color(color.white, 'ASR2', inline = 'asr2', group = G3)
+asr2Width       = input.int(1, '', inline = 'asr2', group = G3)
+asr2Style       = input.string('Dotted', '', ['Solid', 'Dashed', 'Dotted'], inline = 'asr2', group = G3)
+
+// Offset Lines Settings
+tenPercentBool  = input.bool(true, '', inline = 'offset', group = G3)
+tenPercentCol   = input.color(color.white, 'Offset Lines', inline = 'offset', group = G3)
+tenPercentWidth = input.int(1, '', inline = 'offset', group = G3)
+offsetPercent   = input.float(30, 'Offset %', minval=1, maxval=100, step=1, group = G3) 
+tenPercentStyle = input.string('Dotted', '', ['Solid', 'Dashed', 'Dotted'], inline = 'offset', group = G3)
+
+// Fill Settings
+showFills       = input.bool(true, 'Show Zone Fills', group = G3)
+fillResColor    = input.color(color.new(color.red, 20), 'Resistance Fill', inline = 'fills', group = G3)
+fillSupColor    = input.color(color.new(color.green, 20), 'Support Fill', inline = 'fills', group = G3)
+
+//----------PRICE LABELS----------//
+var G4 = 'Price Labels'
+
+// Label Settings
+showLabels      = input.bool(true, 'Show Price Labels', group = G4)
+labelTextSize   = input.string('Normal', 'Label Size', options = ['Tiny','Small','Normal','Large','Huge'], group = G4)
+labelCustomColor = input.bool(false, 'Custom Label Colors', inline = 'labelColors', group = G4)
+labelTextColor  = input.color(color.white, 'Text', inline='labelColors', group = G4)
+labelBgColor    = input.color(color.new(color.blue, 60), 'Background', inline='labelColors', group = G4)
+
+//----------TABLE SETTINGS----------//
+var G5 = 'Table Settings'
+showValuesTable = input.bool(true, 'Show ASR Values Table', group = G5)
+tableYPos       = input.string('Bottom', 'Position ', options = ['Top', 'Middle', 'Bottom'], inline = 'tablePos', group = G5)
+tableXPos       = input.string('Right', ' ', options = ['Right','Center', 'Left'], inline = 'tablePos', group = G5)
+tableHeaderBgColor = input.color(color.new(color.black, 20), 'Header Background', inline = 'tableHeaderColors', group = G5)
+tableHeaderTextColor = input.color(color.white, 'Text', inline = 'tableHeaderColors', group = G5)
+tableValueBgColor  = input.color(color.black, 'Value Background', inline = 'tableValueColors', group = G5)
+tableValueTextColor  = input.color(color.white, 'Text', inline = 'tableValueColors', group = G5)
+tableValuesTextSize = input.string('Normal', 'Text Size', options = ['Tiny','Small','Normal','Large','Huge'], group = G5)
+tableBorderColor = input.color(color.white, 'Border Color', inline = 'tableBorder', group = G5)
+tableBorderWidth = input.int(1, 'Width', minval=0, maxval=3, inline = 'tableBorder', group = G5)
+
+//----------METHODS----------//
+method styler(string this)=>
+    switch this
+        'Solid'  => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+
+method txtSize(string this)=>
+    switch this
+        'Tiny'      => size.tiny
+        'Small'     => size.small
+        'Normal'    => size.normal
+        'Large'     => size.large
+        'Huge'      => size.huge
+
+//----------UDT----------//
+type lineDrawing
+    color   levCol
+    int     levWidth
+    string  levStyle
+    bool    showLev
+    string  name
+
+var colArr = array.from(
+         lineDrawing.new(asr1Col, asr1Width, asr1Style.styler(), asr1Bool, '0.50 ASR'),
+         lineDrawing.new(asr1Col, asr1Width, asr1Style.styler(), asr1Bool, '-0.50 ASR'),
+         lineDrawing.new(tenPercentCol, tenPercentWidth, tenPercentStyle.styler(), tenPercentBool, '0.50 ASR -' + str.tostring(offsetPercent) + '%'),
+         lineDrawing.new(tenPercentCol, tenPercentWidth, tenPercentStyle.styler(), tenPercentBool, '-0.50 ASR +' + str.tostring(offsetPercent) + '%'))
+
+//----------SESSION LOGIC----------//
+getSessionTimes() =>
+    var string sessionTimes = ""
+    var string sessionTimezone = ""
+    
+    if syminfo.type == "stock"
+        sessionTimes := "0930-1600"
+        sessionTimezone := "America/New_York"
+    else if session_type == "Day Session (RTH)"
+        sessionTimes := rthSessionTimes
+        sessionTimezone := "America/New_York"
+    else if session_type == "Overnight Session (ON)"
+        sessionTimes := overnightSessionTimes
+        sessionTimezone := "America/New_York"
+    else if session_type == "FX-Tokyo"
+        sessionTimes := fxTokyoSessionTimes
+        sessionTimezone := "Asia/Tokyo"
+    else if session_type == "FX-London"
+        sessionTimes := fxLondonSessionTimes
+        sessionTimezone := "Europe/London"
+    else if session_type == "FX-New York"
+        sessionTimes := fxNewYorkSessionTimes
+        sessionTimezone := "America/New_York"
+    else // Custom
+        sessionTimes := customSessionTimes
+        sessionTimezone := syminfo.timezone
+    
+    [sessionTimes, sessionTimezone]
+
+//----------SESSIONS----------//
+[activeSessionTime, activeTimezone] = getSessionTimes()
+session         = time(timeframe.period, activeSessionTime, activeTimezone)
+startSession    = not na(session) and na(session[1])
+endSession      = na(session) and not na(session[1])
+
+// Handle special case for stocks in extended hours
+if syminfo.type == "stock" and syminfo.session == session.extended and not session.ismarket
+    session := na
+
+split           = str.split(activeSessionTime,'-')
+start           = split.get(0)
+end             = split.get(1)
+
+startHour       = str.tonumber(str.substring(start,0,2))
+startMin        = str.tonumber(str.substring(start,2,4))
+endHour         = str.tonumber(str.substring(end,0,2))
+endMin          = str.tonumber(str.substring(end,2,4))
+
+startTime       = timestamp(year, month, dayofweek, int(startHour), int(startMin))
+int endTime     = na
+int sessionLength = 0  
+
+if endHour < startHour
+    endTime := timestamp(year, month, dayofweek+1, int(endHour), int(endMin))
+else
+    endTime := timestamp(year, month, dayofweek, int(endHour), int(endMin))
+
+sessionLength := endTime - startTime
+
+//----------VARIABLES----------//
+var sessionRanges1      = array.new<float>()
+var sessionRanges2      = array.new<float>()
+var lines               = array.new<line>()
+var labels              = array.new<label>()
+var boxesRes            = array.new<box>()  
+var boxesSup            = array.new<box>()
+var float sessionHigh   = na
+var float sessionLow    = na
+var float sessionOpen   = na
+var table asrValuesTable = table.new(str.lower(tableYPos) + '_' + str.lower(tableXPos), 2, 3, tableValueBgColor, tableBorderColor, tableBorderWidth, tableBorderColor, tableBorderWidth)
+var sessionOpens       = array.new<float>()  
+var sessionStarts      = array.new<int>()    
+var sessionLengths     = array.new<int>()   
+var int nextSessionTime = na  
+
+//----------SESSION DATA----------//
+if startSession
+    sessionHigh := high
+    sessionLow  := low
+    sessionOpen := open
+    // Store session data at the start instead of end
+    sessionOpens.push(sessionOpen)
+    sessionStarts.push(time)
+    sessionLengths.push(sessionLength)
+    
+    if sessionOpens.size() > length1 * 2  // Keep double length for history
+        sessionOpens.shift()
+        sessionStarts.shift()
+        sessionLengths.shift()
+
+if time == session
+    sessionHigh := math.max(sessionHigh,high)
+    sessionLow  := math.min(sessionLow,low)
+
+if endSession
+    sessionRanges1.push(sessionHigh-sessionLow)
+    sessionRanges2.push(sessionHigh-sessionLow)
+    if sessionRanges1.size() > length1 * 2
+        sessionRanges1.shift()
+    if sessionRanges2.size() > length2 * 2
+        sessionRanges2.shift()
+
+//----------CONDITIONS----------//
+asr1    = sessionRanges1.size() > 0 ? sessionRanges1.avg() : na
+asr2    = sessionRanges2.size() > 0 ? sessionRanges2.avg() : na
+half1   = asr1 / 2
+half2   = asr2 / 2
+
+asrArr1 = array.from(
+     sessionOpen + half1, 
+     sessionOpen - half1,
+     sessionOpen + half1 * (1 - offsetPercent/100),  // Configurable percentage below 0.50
+     sessionOpen - half1 * (1 - offsetPercent/100))  // Configurable percentage above -0.50
+
+asrArr2 = array.from(sessionOpen + half2, sessionOpen - half2)
+
+//----------VISUALIZATION CLEANUP----------//
+if startSession
+    for l in lines
+        l.delete()
+    for l in labels
+        l.delete()
+    // Delete old boxes
+    while boxesRes.size() > 0
+        box.delete(boxesRes.shift())
+    while boxesSup.size() > 0
+        box.delete(boxesSup.shift())
+    
+    labels.clear()
+    lines.clear()
+    
+    //----------SESSION TIME CALCULATION----------//
+    // Calculate the projected next session start
+    int timeStep = 0
+    if timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly
+        timeStep := 86400000  // 1 day in milliseconds
+    else
+        timeStep := 86400000  // Default to 1 day
+    
+    // Calculate where the next session would start - typically the next trading day at the session start time
+    nextSessionTime := time + timeStep
+    
+    //----------CURRENT SESSION VISUALIZATION----------//
+    if showLines
+        // For current session, draw horizontal lines that extend to the projected next session
+        // Draw current session for ASR1
+        for [idx,lev] in asrArr1
+            setting = colArr.get(idx)
+            if setting.showLev
+                lines.push(line.new(time, lev, nextSessionTime, lev, xloc.bar_time, extend.none, setting.levCol, setting.levStyle, setting.levWidth))
+                if showLabels and idx <= 1  
+                    labelText = str.tostring(lev, format.mintick)
+                    textCol = labelCustomColor ? labelTextColor : setting.levCol
+                    labels.push(label.new(
+                         nextSessionTime, 
+                         lev, 
+                         labelText,
+                         xloc.bar_time, 
+                         color = labelCustomColor ? labelBgColor : color.new(color.black, 20), 
+                         style = label.style_label_left, 
+                         textcolor = textCol,
+                         size = labelTextSize.txtSize(),
+                         textalign = text.align_center))
+        
+        // Draw current session for ASR2 (without labels)
+        for [idx,lev] in asrArr2
+            if asr2Bool
+                lines.push(line.new(time, lev, nextSessionTime, lev, xloc.bar_time, extend.none, color.new(asr2Col, 40), asr2Style.styler(), asr2Width))
+    
+        //----------ZONE FILLS VISUALIZATION----------//
+        // Add fills between ASR1 and ASR2 if enabled
+        if showFills and asr1Bool and asr2Bool
+            // Resistance fill (between ASR1 and ASR2 resistance)
+            float resHigh = math.max(asrArr1.get(0), asrArr2.get(0))
+            float resLow = math.min(asrArr1.get(0), asrArr2.get(0))
+            boxesRes.push(box.new(time, resHigh, nextSessionTime, resLow, 
+                 border_color = na, 
+                 bgcolor = fillResColor,
+                 xloc=xloc.bar_time))
+                 
+            // Support fill (between ASR1 and ASR2 support)
+            float supHigh = math.max(asrArr1.get(1), asrArr2.get(1))
+            float supLow = math.min(asrArr1.get(1), asrArr2.get(1))
+            boxesSup.push(box.new(time, supHigh, nextSessionTime, supLow, 
+                 border_color = na, 
+                 bgcolor = fillSupColor,
+                 xloc=xloc.bar_time))
+    
+        //----------HISTORICAL SESSIONS VISUALIZATION----------//
+        // Draw historical sessions only if we have enough data
+        if showHistorical and sessionOpens.size() > 1
+            for i = 1 to math.min(historicalCount, sessionOpens.size()-1)
+                if i < sessionOpens.size()
+                    histOpen = sessionOpens.get(sessionOpens.size()-i)
+                    histStart = sessionStarts.get(sessionStarts.size()-i)
+                    
+                    // Get the end point for this historical session (which is the start of the next session)
+                    int histEndTime = time  // Default to current time if it's the most recent historical session
+                    if i > 1
+                        histEndTime := sessionStarts.get(sessionStarts.size()-(i-1))  // Next session's start time
+                    
+                    histLevels = array.from(
+                         histOpen + half1, 
+                         histOpen - half1,
+                         histOpen + half1 * (1 - offsetPercent/100),
+                         histOpen - half1 * (1 - offsetPercent/100),
+                         histOpen + half2,
+                         histOpen - half2)
+                    
+                    for [idx,lev] in histLevels
+                        // For ASR1 and offset lines (first 4 levels)
+                        if idx < 4
+                            setting = colArr.get(idx)
+                            if setting.showLev
+                                lines.push(line.new(histStart, lev, histEndTime, lev, 
+                                     xloc.bar_time, extend.none, 
+                                     setting.levCol,
+                                     setting.levStyle, setting.levWidth))
+                                // Only show labels for historical ASR1 main levels if they're not the most recent one
+                                // as those would overlap with the current session's labels
+                                if showLabels and idx <= 1 and i > 1 
+                                    labelText = str.tostring(lev, format.mintick)
+                                    textCol = labelCustomColor ? labelTextColor : setting.levCol
+                                    labels.push(label.new(
+                                         histEndTime, 
+                                         lev, 
+                                         labelText, 
+                                         xloc.bar_time, 
+                                         color = labelCustomColor ? labelBgColor : color.new(color.black, 20), 
+                                         style = label.style_label_left, 
+                                         textcolor = textCol,
+                                         size = labelTextSize.txtSize(),
+                                         textalign = text.align_center))
+                        // For ASR2 (last 2 levels) - without labels
+                        else if idx >= 4 and asr2Bool
+                            lines.push(line.new(histStart, lev, histEndTime, lev, 
+                                 xloc.bar_time, extend.none, 
+                                 color.new(asr2Col, 40),
+                                 asr2Style.styler(), asr2Width))
+                    
+                    //----------HISTORICAL FILLS VISUALIZATION----------//
+                    // Add fills for historical sessions
+                    if showFills and asr1Bool and asr2Bool
+                        // Historical resistance fill
+                        float histResHigh = math.max(histLevels.get(0), histLevels.get(4))
+                        float histResLow = math.min(histLevels.get(0), histLevels.get(4))
+                        boxesRes.push(box.new(histStart, histResHigh, histEndTime, histResLow, 
+                             border_color = na, 
+                             bgcolor = fillResColor,
+                             xloc=xloc.bar_time))
+                             
+                        // Historical support fill
+                        float histSupHigh = math.max(histLevels.get(1), histLevels.get(5))
+                        float histSupLow = math.min(histLevels.get(1), histLevels.get(5))
+                        boxesSup.push(box.new(histStart, histSupHigh, histEndTime, histSupLow, 
+                             border_color = na, 
+                             bgcolor = fillSupColor,
+                             xloc=xloc.bar_time))
+
+//----------DISPLAY TABLE----------//
+if barstate.islast
+    if showValuesTable
+        // First row: ASR Lengths
+        asrValuesTable.cell(0, 0, '14', bgcolor = tableHeaderBgColor, text_color = tableHeaderTextColor, text_size = tableValuesTextSize.txtSize())
+        asrValuesTable.cell(1, 0, '7', bgcolor = tableHeaderBgColor, text_color = tableHeaderTextColor, text_size = tableValuesTextSize.txtSize())
+        
+        // Second row: ASR1 price values (resistance and support)
+        asrValuesTable.cell(0, 1, str.tostring(asrArr1.get(0), format.mintick), bgcolor = tableValueBgColor, text_color = tableValueTextColor, text_size = tableValuesTextSize.txtSize())
+        asrValuesTable.cell(0, 2, str.tostring(asrArr1.get(1), format.mintick), bgcolor = tableValueBgColor, text_color = tableValueTextColor, text_size = tableValuesTextSize.txtSize())
+        
+        // Third row: ASR2 price values (resistance and support)
+        asrValuesTable.cell(1, 1, str.tostring(asrArr2.get(0), format.mintick), bgcolor = tableValueBgColor, text_color = tableValueTextColor, text_size = tableValuesTextSize.txtSize())
+        asrValuesTable.cell(1, 2, str.tostring(asrArr2.get(1), format.mintick), bgcolor = tableValueBgColor, text_color = tableValueTextColor, text_size = tableValuesTextSize.txtSize())
